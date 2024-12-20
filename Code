@@ -1,0 +1,350 @@
+import tkinter as tk
+from tkinter import PhotoImage, ttk, messagebox
+import psutil
+import GPUtil
+import datetime
+from twilio.rest import Client
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import pandas as pd
+import psycopg2
+
+# Set up Twilio credentials
+TWILIO_ACCOUNT_SID = 'TWILIO ACCOUNT SID'
+TWILIO_AUTH_TOKEN = 'ACCOUNT TOKEN'
+TWILIO_PHONE_NUMBER = 'TWILIO PHONE NUMBER'
+TO_PHONE_NUMBER = 'RECEIVER PHONE NUMBER'
+
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# Create empty lists to store historical metric data
+cpu_history = []
+memory_history = []
+disk_history = []
+gpu_history = []
+
+# Create global chart frame variables
+chart_frame_cpu = None
+chart_frame_memory = None
+chart_frame_disk = None
+chart_frame_gpu = None
+
+# Define the path to the Excel file
+excel_file_path = "C:/Users/hp/Desktop/History.xlsx"
+
+import pandas as pd
+
+def save_to_excel():
+    # Create a DataFrame to store historical metric data
+    data = {
+        'Timestamp': pd.Series(datetime.datetime.now() for _ in range(len(cpu_history))),
+        'CPU Usage': pd.Series(cpu_history),
+        'Memory Usage': pd.Series(memory_history),
+        'Disk Usage': pd.Series(disk_history),
+        'GPU Usage': pd.Series(gpu_history)
+    }
+    df = pd.DataFrame(data)
+
+    # Write DataFrame to Excel file
+    try:
+        with pd.ExcelWriter(excel_file_path, mode='a', engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, header=not bool(writer.sheets))
+    except Exception as e:
+        messagebox.showerror("Excel Error", f"Error: {e}")
+
+
+
+# Define ElephantSQL credentials
+DATABASE = 'mctdztnt'
+USER = 'mctdztnt'
+PASSWORD = 'eT3LFA47zOxhrlA2NQ-coutXSc6jghZd'
+HOST = 'hansken.db.elephantsql.com'
+PORT = '5432'
+
+# Function to connect to ElephantSQL
+def connect_to_database():
+    try:
+        conn = psycopg2.connect(database=DATABASE, user=USER, password=PASSWORD, host=HOST, port=PORT)
+        return conn
+    except psycopg2.Error as e:
+        messagebox.showerror("Database Error", f"Error: {e}")
+        return None
+
+# Function to send an alert SMS when system metrics exceed the thresholds
+def send_alert():
+    # Check CPU usage
+    cpu_usage = psutil.cpu_percent()
+
+    # Check memory usage
+    memory_usage = psutil.virtual_memory().percent
+
+    # Check disk usage on the root partition
+    disk_usage = psutil.disk_usage('/').percent
+
+    # Check GPU usage
+    gpus = GPUtil.getGPUs()
+    gpu_usage = gpus[0].load * 100
+
+    # Set threshold values for CPU, memory, disk, and GPU usage
+    cpu_threshold = 5  # 5% CPU usage
+    memory_threshold = 80  # 80% memory usage
+    disk_threshold = 90  # 90% disk usage
+    gpu_threshold = 90  # 90% GPU usage (you can adjust this threshold)
+
+    alert_message = "Alert: "
+
+    if cpu_usage > cpu_threshold:
+        alert_message += f"High CPU Usage! CPU Usage: {cpu_usage}%\n"
+    if memory_usage > memory_threshold:
+        alert_message += f"High Memory Usage! Memory Usage: {memory_usage}%\n"
+    if disk_usage > disk_threshold:
+        alert_message += f"High Disk Usage! Disk Usage: {disk_usage}%\n"
+    if gpu_usage > gpu_threshold:
+        alert_message += f"High GPU Usage! GPU Usage: {gpu_usage}%\n"
+
+    message = client.messages.create(
+        body=alert_message,
+        from_=TWILIO_PHONE_NUMBER,
+        to=TO_PHONE_NUMBER
+    )
+
+# Function to update the status labels with system metrics and record in history
+def update_metrics():
+    # Check CPU usage
+    cpu_usage = psutil.cpu_percent()
+    cpu_history.append(cpu_usage)
+
+    # Check memory usage
+    memory_usage = psutil.virtual_memory().percent
+    memory_history.append(memory_usage)
+
+    # Check disk usage
+    disk_usage = psutil.disk_usage('/').percent
+    disk_history.append(disk_usage)
+
+    # Check GPU usage
+    gpus = GPUtil.getGPUs()
+    gpu_usage = gpus[0].load * 100
+    gpu_history.append(gpu_usage)
+
+    # Save historical data to database
+    save_to_database()
+
+    # Update the chart and status labels
+    update_chart('CPU', cpu_history, chart_frame_cpu)
+    update_chart('Memory', memory_history, chart_frame_memory)
+    update_chart('Disk', disk_history, chart_frame_disk)
+    update_chart('GPU', gpu_history, chart_frame_gpu)
+    update_status_label()
+
+    # Schedule the next update after 1000 milliseconds (1 second)
+    app.after(10000, update_metrics)
+
+# Function to save historical metric data to ElephantSQL
+def save_to_database():
+    conn = connect_to_database()
+    if conn is not None:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS system_metrics (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        cpu_usage FLOAT,
+                        memory_usage FLOAT,
+                        disk_usage FLOAT,
+                        gpu_usage FLOAT
+                    )
+                """)
+                for i in range(len(cpu_history)):
+                    cur.execute("""
+                        INSERT INTO system_metrics (cpu_usage, memory_usage, disk_usage, gpu_usage) 
+                        VALUES (%s, %s, %s, %s)
+                    """, (cpu_history[i], memory_history[i], disk_history[i], gpu_history[i]))
+            conn.commit()
+        except psycopg2.Error as e:
+            messagebox.showerror("Database Error", f"Error: {e}")
+        finally:
+            conn.close()
+
+# Function to clear the status labels
+def clear_status_label():
+    status_label.config(text="")
+    status_label_cpu.config(text="")
+    status_label_memory.config(text="")
+    status_label_disk.config(text="")
+    status_label_gpu.config(text="")
+
+# Function to update the status labels with the latest metrics
+def update_status_label():
+    last_metrics_cpu = cpu_history[-1] if cpu_history else None
+    last_metrics_memory = memory_history[-1] if memory_history else None
+    last_metrics_disk = disk_history[-1] if disk_history else None
+    last_metrics_gpu = gpu_history[-1] if gpu_history else None
+
+    status_text_cpu = f"CPU: {last_metrics_cpu}%" if last_metrics_cpu is not None else ""
+    status_text_memory = f"Memory: {last_metrics_memory}%" if last_metrics_memory is not None else ""
+    status_text_disk = f"Disk: {last_metrics_disk}%" if last_metrics_disk is not None else ""
+    status_text_gpu = f"GPU: {last_metrics_gpu}%" if last_metrics_gpu is not None else ""
+
+    status_label_cpu.config(text=status_text_cpu)
+    status_label_memory.config(text=status_text_memory)
+    status_label_disk.config(text=status_text_disk)
+    status_label_gpu.config(text=status_text_gpu)
+
+# Function to view the history of metrics
+def view_history():
+    history_window = tk.Toplevel(app)
+    history_window.title("Metric History")
+    history_window.geometry("600x400")
+
+    notebook = ttk.Notebook(history_window)
+    notebook.pack(fill='both', expand=True)
+
+    create_history_tab(notebook, "CPU Usage History", cpu_history)
+    create_history_tab(notebook, "Memory Usage History", memory_history)
+    create_history_tab(notebook, "Disk Usage History", disk_history)
+    create_history_tab(notebook, "GPU Usage History", gpu_history)
+
+    notebook.select(0)
+
+# Function to create a tab for a metric history
+def create_history_tab(notebook, tab_title, metric_history):
+    tab = tk.Frame(notebook)
+    notebook.add(tab, text=tab_title)
+
+    history_text = tk.Text(tab, wrap=tk.WORD, font=("Arial", 12))
+    history_text.pack(fill='both', expand=True)
+
+    for metric in metric_history:
+        history_text.insert(tk.END, f"{metric}%\n")
+
+    history_text.config(state=tk.DISABLED)
+
+# Function to customize threshold values
+def customize_thresholds():
+    customize_window = tk.Toplevel(app)
+    customize_window.title("Customize Thresholds")
+    customize_window.geometry("400x200")
+    customize_label = tk.Label(customize_window, text="Customize your thresholds here", font=("Arial", 12))
+    customize_label.pack()
+
+    # Create entry fields for customizing thresholds
+    create_threshold_entry(customize_window, "CPU Threshold (%)", cpu_threshold, set_cpu_threshold)
+    create_threshold_entry(customize_window, "Memory Threshold (%)", memory_threshold, set_memory_threshold)
+    create_threshold_entry(customize_window, "Disk Threshold (%)", disk_threshold, set_disk_threshold)
+    create_threshold_entry(customize_window, "GPU Threshold (%)", gpu_threshold, set_gpu_threshold)
+
+    apply_button = tk.Button(customize_window, text="Apply", command=customize_window.destroy, font=("Arial", 12))
+    apply_button.pack()
+
+# Helper function to create entry fields for customizing thresholds
+def create_threshold_entry(window, label_text, threshold_value, set_threshold_function):
+    label = tk.Label(window, text=label_text, font=("Arial", 12))
+    label.pack()
+    entry = tk.Entry(window, font=("Arial", 12))
+    entry.insert(0, str(threshold_value))
+    entry.pack()
+    set_threshold_function(entry)
+
+# Helper function to set CPU threshold
+def set_cpu_threshold(entry):
+    global cpu_threshold
+    cpu_threshold = float(entry.get())
+
+# Helper function to set memory threshold
+def set_memory_threshold(entry):
+    global memory_threshold
+    memory_threshold = float(entry.get())
+
+# Helper function to set disk threshold
+def set_disk_threshold(entry):
+    global disk_threshold
+    disk_threshold = float(entry.get())
+
+# Helper function to set GPU threshold
+def set_gpu_threshold(entry):
+    global gpu_threshold
+    gpu_threshold = float(entry.get())
+
+# Function to update the chart
+def update_chart(metric_name, metric_history, chart_frame):
+    if chart_frame:
+        chart_frame.destroy()
+
+    chart_frame = tk.Frame(app, bg="white")
+    chart_frame.pack(side=tk.LEFT, padx=20, pady=20, fill=tk.BOTH, expand=True)
+
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(metric_history)
+    ax.set_xlabel('Time')
+    ax.set_ylabel(f'{metric_name} Usage (%)')
+    ax.set_title(f'Historical {metric_name} Usage')
+
+    canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+    canvas.get_tk_widget().pack()
+    canvas.draw()
+
+# Create the main application window
+app = tk.Tk()
+app.title("System Metrics Alert")
+app.geometry("1200x600")
+
+# Set a stylish font for the labels
+font_style = ("Arial", 12)
+
+# Load background image
+background_image = PhotoImage(file="C:/Users/hp/Desktop/Metrics.png")
+
+background_label = tk.Label(app, image=background_image)
+background_label.place(relwidth=1, relheight=1)
+
+# Create and configure status labels
+status_label = tk.Label(app, text="", pady=10, bg="lightblue", font=font_style)
+status_label_cpu = tk.Label(app, text="", pady=10, bg="lightblue", font=font_style)
+status_label_memory = tk.Label(app, text="", pady=10, bg="lightblue", font=font_style)
+status_label_disk = tk.Label(app, text="", pady=10, bg="lightblue", font=font_style)
+status_label_gpu = tk.Label(app, text="", pady=10, bg="lightblue", font=font_style)
+
+# Create buttons with stylish fonts and colors
+update_button = tk.Button(app, text="Update Metrics", command=update_metrics, bg="green", fg="white",
+                          font=font_style, width=20)
+send_alert_button = tk.Button(app, text="Send Alert", command=send_alert, bg="red", fg="white", font=font_style, width=20)
+clear_button = tk.Button(app, text="Clear Status", command=clear_status_label, bg="orange", fg="white",
+                         font=font_style, width=20)
+history_button = tk.Button(app, text="View History", command=view_history, bg="purple", fg="white",
+                          font=font_style, width=20)
+customize_button = tk.Button(app, text="Customize Thresholds", command=customize_thresholds, bg="blue", fg="white",
+                             font=font_style, width=20)
+
+# Place widgets on the window
+status_label.pack()
+status_label_cpu.pack()
+status_label_memory.pack()
+status_label_disk.pack()
+status_label_gpu.pack()
+update_button.pack()
+send_alert_button.pack()
+clear_button.pack()
+history_button.pack()
+customize_button.pack()
+
+# Create initial chart frames
+chart_frame_cpu = tk.Frame(app, bg="white")
+chart_frame_cpu.pack(side=tk.LEFT, padx=20, pady=20, fill=tk.BOTH, expand=True)
+chart_frame_memory = tk.Frame(app, bg="white")
+chart_frame_memory.pack(side=tk.LEFT, padx=20, pady=20, fill=tk.BOTH, expand=True)
+chart_frame_disk = tk.Frame(app, bg="white")
+chart_frame_disk.pack(side=tk.LEFT, padx=20, pady=20, fill=tk.BOTH, expand=True)
+chart_frame_gpu = tk.Frame(app, bg="white")
+chart_frame_gpu.pack(side=tk.LEFT, padx=20, pady=20, fill=tk.BOTH, expand=True)
+
+# Set initial threshold values
+cpu_threshold = 5  # 5% CPU usage
+memory_threshold = 80  # 80% memory usage
+disk_threshold = 90  # 90% disk usage
+gpu_threshold = 90  # 90% GPU usage
+
+# Start the Tkinter main loop
+app.mainloop()
+
