@@ -1,2 +1,3 @@
 # System-Metrics-Monitoring-System
-This is a python project
+The System Metrics Monitoring System is a Tkinter-based GUI application designed to monitor real-time system performance metrics, such as CPU usage, memory usage, and disk usage.
+The application provides users with a simple and interactive interface to track these metrics visually, helping them identify any potential issues or performance bottlenecks.By offering a clear and easy-to-understand display of system resources, this tool can be useful for both casual users and IT professionals in maintaining system efficiency and troubleshooting hardware or software problems.
